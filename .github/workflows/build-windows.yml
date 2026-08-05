@@ -39,7 +39,10 @@ jobs:
 
       - name: Run core tests
         working-directory: fengshui_pyqt5_m1
-        run: python tests/test_core.py
+        shell: pwsh
+        run: |
+          $env:PYTHONPATH = '.'
+          python tests/test_core.py
 
       - name: Build native GUI and portable EXE
         working-directory: fengshui_pyqt5_m1
