@@ -56,7 +56,12 @@ jobs:
       - name: Build per-user installer
         working-directory: fengshui_pyqt5_m1
         shell: pwsh
-        run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $iss = Get-Content 'installer.iss' -Raw
+          $iss = [regex]::Replace($iss, '(?ms)\[Languages\]\s*Name:\s*"chinesesimp";\s*MessagesFile:\s*"compiler:Languages\\ChineseSimplified\.isl"\s*', '')
+          Set-Content 'installer.iss' -Value $iss -Encoding UTF8
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
 
       - name: Collect and verify Windows files
         working-directory: fengshui_pyqt5_m1
