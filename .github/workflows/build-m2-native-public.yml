@@ -70,8 +70,10 @@ jobs:
         shell: pwsh
         run: |
           $env:QT_QPA_PLATFORM='offscreen'
-          & 'dist/慧缘地理风水分析实验室M2/慧缘地理风水分析实验室M2.exe' --smoke-test
-          if ($LASTEXITCODE -ne 0) { throw "Built EXE smoke test failed: $LASTEXITCODE" }
+          $exe=(Resolve-Path 'dist/慧缘地理风水分析实验室M2/慧缘地理风水分析实验室M2.exe').Path
+          $p=Start-Process -FilePath $exe -ArgumentList '--smoke-test' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "Built EXE smoke test failed: $($p.ExitCode)" }
+          Write-Host 'Built EXE smoke test passed.'
 
       - name: Install Inno Setup
         shell: pwsh
@@ -101,8 +103,9 @@ jobs:
           if (-not (Test-Path $exe)) { throw 'Installed application EXE missing' }
           if (-not (Test-Path (Join-Path $target '_internal/_sqlite3.pyd'))) { throw 'Installed _sqlite3.pyd missing' }
           $env:QT_QPA_PLATFORM='offscreen'
-          & $exe --smoke-test
-          if ($LASTEXITCODE -ne 0) { throw "Installed application smoke test failed: $LASTEXITCODE" }
+          $p2=Start-Process -FilePath $exe -ArgumentList '--smoke-test' -Wait -PassThru
+          if ($p2.ExitCode -ne 0) { throw "Installed application smoke test failed: $($p2.ExitCode)" }
+          Write-Host 'Silent installation and installed application smoke test passed.'
 
       - name: Collect release files and hashes
         working-directory: m2_build
