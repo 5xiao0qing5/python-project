@@ -1,0 +1,26 @@
+name: Test cross-repo read
+on:
+  push:
+    branches: [fengshui-m2-pyqt5]
+    paths: ['trigger-crossrepo.txt']
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test private sibling repository read
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $h=@{Authorization="Bearer $env:GH_TOKEN";Accept='application/vnd.github+json'}
+          $u='https://api.github.com/repos/5xiao0qing5/chatgpt/contents/payload-m2/m2_source.part000?ref=fengshui-m2-pyqt5'
+          $r=Invoke-RestMethod -Headers $h -Uri $u
+          if (-not $r.content) { throw 'No content returned' }
+          "size=$($r.size) sha=$($r.sha)" | Set-Content crossrepo.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: crossrepo-test
+          path: crossrepo.txt
