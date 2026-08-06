@@ -1,0 +1,124 @@
+name: Build M2 Native PyQt5 Public
+
+on:
+  push:
+    branches: [fengshui-m2-pyqt5]
+    paths:
+      - 'm2_native/**'
+      - '.github/workflows/build-m2-native-public.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Reconstruct source
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $parts = Get-ChildItem 'm2_native/source.part*' | Sort-Object Name
+          if ($parts.Count -ne 5) { throw "Expected 5 source parts, found $($parts.Count)" }
+          $b64 = ($parts | ForEach-Object { (Get-Content $_.FullName -Raw).Trim() }) -join ''
+          [IO.File]::WriteAllBytes('m2_native_source.zip', [Convert]::FromBase64String($b64))
+          $hash=(Get-FileHash 'm2_native_source.zip' -Algorithm SHA256).Hash.ToLower()
+          if ($hash -ne '70c8871c9fce29d0c7c37cbefb2f89153c43c3bcdc6af5a780509a41e824e6db') { throw "Source SHA256 mismatch: $hash" }
+          Expand-Archive -Path 'm2_native_source.zip' -DestinationPath 'm2_build' -Force
+          if (-not (Test-Path 'm2_build/app.py')) { throw 'Missing app.py after reconstruction' }
+          if (-not (Test-Path 'm2_build/FengShuiM2.spec')) { throw 'Missing PyInstaller spec' }
+          if (-not (Test-Path 'm2_build/installer.iss')) { throw 'Missing Inno Setup script' }
+
+      - name: Setup Python 3.11 x64
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          architecture: 'x64'
+
+      - name: Install build dependencies
+        working-directory: m2_build
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -c "import sqlite3, _sqlite3, PyQt5, cv2, numpy; print('dependency imports OK', sqlite3.sqlite_version)"
+
+      - name: Source GUI smoke test
+        working-directory: m2_build
+        shell: pwsh
+        run: |
+          $env:QT_QPA_PLATFORM='offscreen'
+          python app.py --smoke-test
+          if ($LASTEXITCODE -ne 0) { throw "Source smoke test failed: $LASTEXITCODE" }
+
+      - name: Build native PyQt5 application
+        working-directory: m2_build
+        shell: pwsh
+        run: |
+          pyinstaller --noconfirm --clean FengShuiM2.spec
+          $app='dist/慧缘地理风水分析实验室M2/慧缘地理风水分析实验室M2.exe'
+          if (-not (Test-Path $app)) { throw 'PyInstaller did not create the application EXE' }
+          if ((Get-Item $app).Length -lt 1000000) { throw 'Application EXE is unexpectedly small' }
+          if (-not (Test-Path 'dist/慧缘地理风水分析实验室M2/_internal/python311.dll')) { throw 'Python runtime missing from onedir build' }
+          if (-not (Test-Path 'dist/慧缘地理风水分析实验室M2/_internal/_sqlite3.pyd')) { throw '_sqlite3.pyd missing from onedir build' }
+
+      - name: Built EXE smoke test
+        working-directory: m2_build
+        shell: pwsh
+        run: |
+          $env:QT_QPA_PLATFORM='offscreen'
+          & 'dist/慧缘地理风水分析实验室M2/慧缘地理风水分析实验室M2.exe' --smoke-test
+          if ($LASTEXITCODE -ne 0) { throw "Built EXE smoke test failed: $LASTEXITCODE" }
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --no-progress -y
+
+      - name: Compile genuine Inno Setup installer
+        working-directory: m2_build
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          & 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe' installer.iss
+          $setup='build/installer/慧缘地理风水分析实验室_M2_v2.1.0_PyQt5_完整安装版.exe'
+          if (-not (Test-Path $setup)) { throw 'Installer was not created' }
+          if ((Get-Item $setup).Length -lt 30000000) { throw 'Installer is unexpectedly small' }
+
+      - name: Silent install and installed-app smoke test
+        working-directory: m2_build
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $setup=(Resolve-Path 'build/installer/慧缘地理风水分析实验室_M2_v2.1.0_PyQt5_完整安装版.exe').Path
+          $target=Join-Path $env:RUNNER_TEMP 'HuiYuanFengShuiM2_Verify'
+          $args="/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- /DIR=`"$target`""
+          $p=Start-Process -FilePath $setup -ArgumentList $args -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "Installer returned exit code $($p.ExitCode)" }
+          $exe=Join-Path $target '慧缘地理风水分析实验室M2.exe'
+          if (-not (Test-Path $exe)) { throw 'Installed application EXE missing' }
+          if (-not (Test-Path (Join-Path $target '_internal/_sqlite3.pyd'))) { throw 'Installed _sqlite3.pyd missing' }
+          $env:QT_QPA_PLATFORM='offscreen'
+          & $exe --smoke-test
+          if ($LASTEXITCODE -ne 0) { throw "Installed application smoke test failed: $LASTEXITCODE" }
+
+      - name: Collect release files and hashes
+        working-directory: m2_build
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path release | Out-Null
+          Copy-Item 'build/installer/慧缘地理风水分析实验室_M2_v2.1.0_PyQt5_完整安装版.exe' release/
+          Compress-Archive -Path 'dist/慧缘地理风水分析实验室M2/*' -DestinationPath 'release/慧缘地理风水分析实验室_M2_v2.1.0_PyQt5_绿色版.zip' -Force
+          Get-FileHash release/* -Algorithm SHA256 | ForEach-Object { "$($_.Hash)  $([IO.Path]::GetFileName($_.Path))" } | Set-Content release/SHA256.txt -Encoding UTF8
+          Get-ChildItem release | Format-Table Name,Length
+
+      - name: Upload verified Windows package
+        uses: actions/upload-artifact@v4
+        with:
+          name: HuiYuan-M2-v2.1.0-PyQt5-Windows
+          path: m2_build/release/*
+          retention-days: 30
+          compression-level: 0
+          if-no-files-found: error
